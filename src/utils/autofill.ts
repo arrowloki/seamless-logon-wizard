@@ -1,14 +1,12 @@
 
-// Helper functions for form detection and autofill
+// Utility functions for form detection and autofill
 
 interface FormField {
-  element: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+  element: HTMLInputElement;
   type: string;
   id: string;
   name: string;
-  className: string;
-  isPassword: boolean;
-  isUsername: boolean;
+  visible: boolean;
 }
 
 interface DetectedForm {
@@ -16,231 +14,173 @@ interface DetectedForm {
   usernameField?: FormField;
   passwordField?: FormField;
   submitButton?: HTMLElement;
-  fields: FormField[];
 }
 
-// Keywords that might indicate a username field
-const usernameKeywords = [
-  'user', 'email', 'login', 'id', 'identifier', 'account', 'customer', 'phone', 'mail'
-];
-
-// Keywords that might indicate a password field
-const passwordKeywords = [
-  'pass', 'pwd', 'secret'
-];
-
-// Common selectors for login forms
-const loginFormSelectors = [
-  'form[action*="login"]',
-  'form[action*="signin"]',
-  'form[action*="sign-in"]',
-  'form[action*="auth"]',
-  'form[id*="login"]',
-  'form[id*="signin"]',
-  'form[id*="auth"]',
-  'form[class*="login"]',
-  'form[class*="signin"]',
-  'form.login',
-  'form.signin',
-  'form[name*="login"]',
-  'form.sign-in',
-  'form.auth'
-];
-
-/**
- * Detects potential login forms on the page
- */
-export function detectForms(): DetectedForm[] {
-  // First try specific login form selectors
-  let forms = Array.from(document.querySelectorAll(loginFormSelectors.join(',')));
+// Check if an element is visible
+const isVisible = (element: HTMLElement): boolean => {
+  if (!element) return false;
   
-  // If no login forms found, get all forms
-  if (forms.length === 0) {
-    forms = Array.from(document.querySelectorAll('form'));
+  const style = window.getComputedStyle(element);
+  return style.display !== 'none' && 
+         style.visibility !== 'hidden' && 
+         style.opacity !== '0' &&
+         element.offsetWidth > 0 &&
+         element.offsetHeight > 0;
+};
+
+// Get all input elements recursively
+const getAllInputs = (form: HTMLFormElement): HTMLInputElement[] => {
+  const inputs: HTMLInputElement[] = [];
+  
+  // Helper function to recursively find input elements
+  const findInputs = (element: HTMLElement) => {
+    // If the element is an input, add it to the list
+    if (element.tagName === 'INPUT') {
+      inputs.push(element as HTMLInputElement);
+    }
+    
+    // Recursively check all child elements
+    Array.from(element.children).forEach(child => {
+      findInputs(child as HTMLElement);
+    });
+  };
+  
+  findInputs(form);
+  return inputs;
+};
+
+// Find the submit button for a form
+const findSubmitButton = (form: HTMLFormElement): HTMLElement | undefined => {
+  // Look for submit inputs
+  const submitInputs = getAllInputs(form).filter(
+    input => input.type === 'submit' && isVisible(input)
+  );
+  
+  if (submitInputs.length > 0) {
+    return submitInputs[0];
   }
   
-  // If still no forms, search for inputs directly
-  if (forms.length === 0) {
-    const passwordFields = Array.from(document.querySelectorAll('input[type="password"]'));
-    
-    // Create a virtual form for each password field
-    return passwordFields.map(passwordField => {
-      // Find closest parent that might be a form container
-      const container = passwordField.closest('div, section, main') || document.body;
-      
-      // Look for a nearby input that might be a username
-      const inputs = Array.from(container.querySelectorAll('input')).filter(
-        input => input !== passwordField && 
-          input.type !== 'hidden' && 
-          input.type !== 'checkbox' &&
-          input.type !== 'radio' &&
-          !input.disabled
-      );
-      
-      const usernameField = inputs.find(input => {
-        const inputId = (input.id || '').toLowerCase();
-        const inputName = (input.name || '').toLowerCase();
-        const inputType = (input.type || '').toLowerCase();
-        
-        return usernameKeywords.some(keyword => 
-          inputId.includes(keyword) || 
-          inputName.includes(keyword) ||
-          (input.placeholder && input.placeholder.toLowerCase().includes(keyword))
-        ) || inputType === 'email';
-      });
-      
-      const detectedForm: DetectedForm = {
-        element: container as any as HTMLFormElement, // Not actually a form but we need a container
-        fields: [],
-        passwordField: {
-          element: passwordField as HTMLInputElement,
-          type: 'password',
-          id: passwordField.id,
-          name: passwordField.name,
-          className: passwordField.className,
-          isPassword: true,
-          isUsername: false
-        }
-      };
-      
-      if (usernameField) {
-        detectedForm.usernameField = {
-          element: usernameField as HTMLInputElement,
-          type: usernameField.type,
-          id: usernameField.id,
-          name: usernameField.name,
-          className: usernameField.className,
-          isPassword: false,
-          isUsername: true
-        };
-      }
-      
-      // Look for a submit button
-      const buttons = Array.from(container.querySelectorAll('button, input[type="submit"], [role="button"]'));
-      const submitButton = buttons.find(button => {
-        const text = button.textContent?.toLowerCase() || '';
-        return text.includes('sign in') || 
-               text.includes('login') || 
-               text.includes('log in') ||
-               text.includes('enter') ||
-               text.includes('submit') ||
-               button.getAttribute('type') === 'submit';
-      });
-      
-      if (submitButton) {
-        detectedForm.submitButton = submitButton as HTMLElement;
-      }
-      
-      return detectedForm;
-    });
+  // Look for buttons
+  const buttons = Array.from(form.querySelectorAll('button'));
+  
+  // First, try to find a button with type="submit"
+  const submitButtons = buttons.filter(
+    button => button.getAttribute('type') === 'submit' && isVisible(button)
+  );
+  
+  if (submitButtons.length > 0) {
+    return submitButtons[0];
   }
   
-  // Process regular forms to identify username and password fields
-  return forms.map(form => {
-    const inputs = Array.from(form.querySelectorAll('input, select, textarea'));
-    
-    const fields: FormField[] = inputs
-      .filter(input => !input.disabled && input.type !== 'hidden')
-      .map(input => {
-        const inputElement = input as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
-        const inputId = (inputElement.id || '').toLowerCase();
-        const inputName = (inputElement.name || '').toLowerCase();
-        const inputPlaceholder = 'placeholder' in inputElement ? (inputElement.placeholder || '').toLowerCase() : '';
-        
-        // Determine if this is likely a username field
-        const isUsername = usernameKeywords.some(keyword => 
-          inputId.includes(keyword) || 
-          inputName.includes(keyword) ||
-          inputPlaceholder.includes(keyword)
-        ) || inputElement.type === 'email';
-        
-        // Determine if this is a password field
-        const isPassword = inputElement.type === 'password' || 
-          passwordKeywords.some(keyword => 
-            inputId.includes(keyword) || 
-            inputName.includes(keyword) ||
-            inputPlaceholder.includes(keyword)
-          );
-        
-        return {
-          element: inputElement,
-          type: inputElement.type,
-          id: inputElement.id,
-          name: inputElement.name,
-          className: inputElement.className,
-          isUsername,
-          isPassword
-        };
-      });
-    
-    // Find the first username and password fields
-    const usernameField = fields.find(field => field.isUsername);
-    const passwordField = fields.find(field => field.isPassword);
-    
-    // Find a submit button
-    const buttons = Array.from(form.querySelectorAll('button, input[type="submit"], [role="button"]'));
-    const submitButton = buttons.find(button => {
-      const text = button.textContent?.toLowerCase() || '';
-      return text.includes('sign in') || 
-             text.includes('login') || 
-             text.includes('log in') ||
-             text.includes('enter') ||
-             text.includes('submit') ||
-             button.getAttribute('type') === 'submit';
-    });
-    
-    return {
-      element: form as HTMLFormElement,
-      usernameField,
-      passwordField,
-      submitButton: submitButton as HTMLElement,
-      fields
-    };
+  // Next, look for buttons that look like submit buttons
+  const buttonsByText = buttons.filter(button => {
+    const buttonText = button.textContent?.toLowerCase() || '';
+    return isVisible(button) && 
+           (buttonText.includes('sign in') || 
+            buttonText.includes('login') || 
+            buttonText.includes('log in') ||
+            buttonText.includes('submit'));
   });
-}
-
-/**
- * Fills a detected form with the provided credentials
- */
-export function fillForm(form: DetectedForm, credential: any): boolean {
-  let filled = false;
   
-  // Fill username field if available
-  if (form.usernameField && credential.username) {
-    form.usernameField.element.value = credential.username;
-    form.usernameField.element.dispatchEvent(new Event('input', { bubbles: true }));
-    form.usernameField.element.dispatchEvent(new Event('change', { bubbles: true }));
-    filled = true;
+  if (buttonsByText.length > 0) {
+    return buttonsByText[0];
   }
   
-  // Fill password field if available
-  if (form.passwordField && credential.password) {
-    form.passwordField.element.value = credential.password;
-    form.passwordField.element.dispatchEvent(new Event('input', { bubbles: true }));
-    form.passwordField.element.dispatchEvent(new Event('change', { bubbles: true }));
-    filled = true;
+  return undefined;
+};
+
+// Detect login forms on the page
+export const detectForms = (): DetectedForm[] => {
+  const forms = Array.from(document.querySelectorAll('form'));
+  const detectedForms: DetectedForm[] = [];
+  
+  forms.forEach(form => {
+    const inputs = getAllInputs(form);
+    
+    // Find password fields
+    const passwordFields = inputs.filter(input => {
+      return input.type === 'password' && isVisible(input);
+    }).map(input => ({
+      element: input,
+      type: 'password',
+      id: input.id || '',
+      name: input.name || '',
+      visible: isVisible(input)
+    }));
+    
+    if (passwordFields.length === 0) {
+      return; // Not a login form if no password field
+    }
+    
+    // Find username fields (usually text inputs that come before password fields)
+    const usernameFields = inputs.filter(input => {
+      return (input.type === 'text' || 
+              input.type === 'email' || 
+              input.type === 'tel' || 
+              input.getAttribute('autocomplete') === 'username') && 
+              isVisible(input) &&
+              input.type !== 'hidden';
+    }).map(input => ({
+      element: input,
+      type: input.type,
+      id: input.id || '',
+      name: input.name || '',
+      visible: isVisible(input)
+    }));
+    
+    if (usernameFields.length === 0) {
+      return; // Skip forms with no obvious username field
+    }
+    
+    // Find the submit button
+    const submitButton = findSubmitButton(form);
+    
+    detectedForms.push({
+      element: form,
+      usernameField: usernameFields[0],
+      passwordField: passwordFields[0],
+      submitButton
+    });
+  });
+  
+  return detectedForms;
+};
+
+// Fill a form with credentials
+export const fillForm = (form: DetectedForm, credentials: { username: string, password: string }): boolean => {
+  if (!form.usernameField || !form.passwordField) {
+    return false;
   }
   
-  return filled;
-}
+  try {
+    // Fill username field
+    const usernameInput = form.usernameField.element;
+    if (usernameInput && !usernameInput.disabled && usernameInput.type !== 'hidden') {
+      usernameInput.value = credentials.username;
+      usernameInput.dispatchEvent(new Event('input', { bubbles: true }));
+      usernameInput.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    
+    // Fill password field
+    const passwordInput = form.passwordField.element;
+    if (passwordInput && !passwordInput.disabled && passwordInput.type !== 'hidden') {
+      passwordInput.value = credentials.password;
+      passwordInput.dispatchEvent(new Event('input', { bubbles: true }));
+      passwordInput.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('Error filling form:', error);
+    return false;
+  }
+};
 
-/**
- * Submits a form after filling it
- */
-export function submitForm(form: DetectedForm): boolean {
+// Submit a form after filling
+export const submitForm = (form: DetectedForm): void => {
   if (form.submitButton) {
     form.submitButton.click();
-    return true;
-  } else if (form.element.tagName === 'FORM') {
+  } else if (form.element) {
     form.element.submit();
-    return true;
   }
-  return false;
-}
-
-// Make these functions available globally for content script
-if (typeof window !== 'undefined') {
-  (window as any).detectForms = detectForms;
-  (window as any).fillForm = fillForm;
-  (window as any).submitForm = submitForm;
-}
+};

@@ -3,6 +3,7 @@
 interface Chrome {
   tabs: {
     query: (queryInfo: { active: boolean; currentWindow: boolean }, callback: (tabs: any[]) => void) => void;
+    create: (createProperties: { url: string }, callback?: (tab: any) => void) => void;
   };
   runtime: {
     sendMessage: (message: any, callback?: (response: any) => void) => void;
