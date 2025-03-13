@@ -39,33 +39,49 @@ const Index = () => {
   const [showAddForm, setShowAddForm] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [currentUrl, setCurrentUrl] = useState('');
-  const [isFirstTime, setIsFirstTime] = useState(false);
+  const [isFirstTime, setIsFirstTime] = useState(true); // Default to true until we check
   const [isUnlocking, setIsUnlocking] = useState(false);
+  const [isInitializing, setIsInitializing] = useState(true);
   
   // Initial setup
   useEffect(() => {
     const init = async () => {
-      // Check if master password exists
-      const hasMasterPassword = await storage.hasMasterPassword();
-      setHasMaster(hasMasterPassword);
-      setIsFirstTime(!hasMasterPassword);
-      
-      // Get current tab URL
-      if (chrome.tabs) {
-        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-          if (tabs[0]?.url) {
-            setCurrentUrl(tabs[0].url);
-          }
+      try {
+        console.log("Starting initialization");
+        // Check if master password exists
+        const hasMasterPassword = await storage.hasMasterPassword();
+        console.log("Has master password check result:", hasMasterPassword);
+        setHasMaster(hasMasterPassword);
+        setIsFirstTime(!hasMasterPassword);
+        
+        // Get current tab URL if in extension context
+        const isExtension = typeof window.chrome !== 'undefined' && chrome.tabs !== undefined;
+        if (isExtension) {
+          chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+            if (tabs[0]?.url) {
+              setCurrentUrl(tabs[0].url);
+            }
+          });
+        }
+        
+        // Get settings
+        const storedSettings = await storage.getSettings();
+        setSettings(storedSettings);
+      } catch (error) {
+        console.error("Initialization error:", error);
+        toast({
+          title: "Initialization Error",
+          description: "There was an error loading your data. Please try again.",
+          variant: "destructive",
+          duration: 3000,
         });
+      } finally {
+        setIsInitializing(false);
       }
-      
-      // Get settings
-      const storedSettings = await storage.getSettings();
-      setSettings(storedSettings);
     };
     
     init();
-  }, []);
+  }, [toast]);
   
   // Load credentials when unlocked
   useEffect(() => {
@@ -77,8 +93,18 @@ const Index = () => {
   const loadCredentials = async () => {
     if (!masterPassword) return;
     
-    const storedCredentials = await storage.getCredentials(masterPassword);
-    setCredentials(storedCredentials || []);
+    try {
+      const storedCredentials = await storage.getCredentials(masterPassword);
+      setCredentials(storedCredentials || []);
+    } catch (error) {
+      console.error("Error loading credentials:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load your saved credentials",
+        variant: "destructive",
+        duration: 3000,
+      });
+    }
   };
   
   const handleCreateMaster = async () => {
@@ -116,6 +142,7 @@ const Index = () => {
         duration: 3000,
       });
     } catch (error) {
+      console.error("Error creating master password:", error);
       toast({
         title: "Error",
         description: "Failed to create master password",
@@ -160,6 +187,7 @@ const Index = () => {
         });
       }
     } catch (error) {
+      console.error("Error unlocking vault:", error);
       toast({
         title: "Error",
         description: "Failed to unlock vault",
@@ -189,6 +217,7 @@ const Index = () => {
         duration: 3000,
       });
     } catch (error) {
+      console.error("Error saving credential:", error);
       toast({
         title: "Error",
         description: "Failed to save login details",
@@ -209,6 +238,7 @@ const Index = () => {
         duration: 3000,
       });
     } catch (error) {
+      console.error("Error deleting credential:", error);
       toast({
         title: "Error",
         description: "Failed to delete login details",
@@ -230,6 +260,7 @@ const Index = () => {
         duration: 3000,
       });
     } catch (error) {
+      console.error("Error saving settings:", error);
       toast({
         title: "Error",
         description: "Failed to save settings",
@@ -240,7 +271,8 @@ const Index = () => {
   };
   
   const handleAutofill = async (credential: LoginCredential) => {
-    if (chrome.runtime) {
+    const isExtension = typeof window.chrome !== 'undefined' && chrome.runtime !== undefined;
+    if (isExtension) {
       chrome.runtime.sendMessage(
         { action: 'fillCredential', credential },
         (response) => {
@@ -260,8 +292,24 @@ const Index = () => {
           }
         }
       );
+    } else {
+      toast({
+        title: "Not Available",
+        description: "Autofill is only available in the extension",
+        duration: 3000,
+      });
     }
   };
+  
+  // Show loading state
+  if (isInitializing) {
+    return (
+      <div className="min-h-[500px] w-[400px] flex flex-col items-center justify-center bg-gradient-to-br from-white to-gray-100 dark:from-gray-900 dark:to-gray-950">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
+        <p className="mt-4 text-muted-foreground">Loading OneLogin...</p>
+      </div>
+    );
+  }
   
   // Render locked state (login screen)
   if (isLocked) {

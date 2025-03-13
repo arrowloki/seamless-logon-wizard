@@ -66,7 +66,26 @@ const decrypt = (data: string, masterPassword: string): string => {
   }
 };
 
-// Chrome storage wrapper
+// Mock storage for non-extension environments
+const mockStorage = {
+  get: async (key: string) => {
+    const item = localStorage.getItem(key);
+    return item ? { [key]: item } : {};
+  },
+  set: async (data: Record<string, any>) => {
+    Object.entries(data).forEach(([key, value]) => {
+      localStorage.setItem(key, value);
+    });
+  },
+  clear: async () => {
+    localStorage.clear();
+  }
+};
+
+// Determine if we're in a Chrome extension context
+const isExtension = typeof window.chrome !== 'undefined' && chrome.storage !== undefined;
+
+// Chrome storage wrapper with fallback to localStorage
 export const storage = {
   // Save credentials
   saveCredential: async (credential: LoginCredential, masterPassword: string): Promise<void> => {
@@ -74,13 +93,29 @@ export const storage = {
     const updated = existing.filter(c => c.id !== credential.id).concat(credential);
     
     const encrypted = encrypt(JSON.stringify(updated), masterPassword);
-    await chrome.storage.sync.set({ [CREDENTIALS_KEY]: encrypted });
+    
+    if (isExtension) {
+      await new Promise<void>(resolve => {
+        chrome.storage.sync.set({ [CREDENTIALS_KEY]: encrypted }, () => resolve());
+      });
+    } else {
+      await mockStorage.set({ [CREDENTIALS_KEY]: encrypted });
+    }
   },
 
   // Get all credentials
   getCredentials: async (masterPassword: string): Promise<LoginCredential[]> => {
     try {
-      const result = await chrome.storage.sync.get(CREDENTIALS_KEY);
+      let result: Record<string, any> = {};
+      
+      if (isExtension) {
+        result = await new Promise(resolve => {
+          chrome.storage.sync.get(CREDENTIALS_KEY, (items) => resolve(items));
+        });
+      } else {
+        result = await mockStorage.get(CREDENTIALS_KEY);
+      }
+      
       const encrypted = result[CREDENTIALS_KEY];
       
       if (!encrypted) return [];
@@ -99,7 +134,14 @@ export const storage = {
     const updated = credentials.filter(c => c.id !== id);
     
     const encrypted = encrypt(JSON.stringify(updated), masterPassword);
-    await chrome.storage.sync.set({ [CREDENTIALS_KEY]: encrypted });
+    
+    if (isExtension) {
+      await new Promise<void>(resolve => {
+        chrome.storage.sync.set({ [CREDENTIALS_KEY]: encrypted }, () => resolve());
+      });
+    } else {
+      await mockStorage.set({ [CREDENTIALS_KEY]: encrypted });
+    }
   },
 
   // Find credentials for a specific URL
@@ -119,28 +161,68 @@ export const storage = {
 
   // Settings management
   getSettings: async (): Promise<AppSettings> => {
-    const result = await chrome.storage.sync.get(SETTINGS_KEY);
+    let result: Record<string, any> = {};
+    
+    if (isExtension) {
+      result = await new Promise(resolve => {
+        chrome.storage.sync.get(SETTINGS_KEY, (items) => resolve(items));
+      });
+    } else {
+      result = await mockStorage.get(SETTINGS_KEY);
+    }
+    
     return result[SETTINGS_KEY] || DEFAULT_SETTINGS;
   },
 
   saveSettings: async (settings: AppSettings): Promise<void> => {
-    await chrome.storage.sync.set({ [SETTINGS_KEY]: settings });
+    if (isExtension) {
+      await new Promise<void>(resolve => {
+        chrome.storage.sync.set({ [SETTINGS_KEY]: settings }, () => resolve());
+      });
+    } else {
+      await mockStorage.set({ [SETTINGS_KEY]: settings });
+    }
   },
 
   // Master password management
   hasMasterPassword: async (): Promise<boolean> => {
-    const result = await chrome.storage.sync.get(MASTER_KEY);
+    let result: Record<string, any> = {};
+    
+    if (isExtension) {
+      result = await new Promise(resolve => {
+        chrome.storage.sync.get(MASTER_KEY, (items) => resolve(items));
+      });
+    } else {
+      result = await mockStorage.get(MASTER_KEY);
+    }
+    
     return !!result[MASTER_KEY];
   },
 
   setMasterPassword: async (password: string): Promise<void> => {
     // Store a hash of the master password, not the password itself
     const hash = await hashPassword(password);
-    await chrome.storage.sync.set({ [MASTER_KEY]: hash });
+    
+    if (isExtension) {
+      await new Promise<void>(resolve => {
+        chrome.storage.sync.set({ [MASTER_KEY]: hash }, () => resolve());
+      });
+    } else {
+      await mockStorage.set({ [MASTER_KEY]: hash });
+    }
   },
 
   verifyMasterPassword: async (password: string): Promise<boolean> => {
-    const result = await chrome.storage.sync.get(MASTER_KEY);
+    let result: Record<string, any> = {};
+    
+    if (isExtension) {
+      result = await new Promise(resolve => {
+        chrome.storage.sync.get(MASTER_KEY, (items) => resolve(items));
+      });
+    } else {
+      result = await mockStorage.get(MASTER_KEY);
+    }
+    
     const storedHash = result[MASTER_KEY];
     if (!storedHash) return false;
     
@@ -149,7 +231,13 @@ export const storage = {
   },
 
   clearAllData: async (): Promise<void> => {
-    await chrome.storage.sync.clear();
+    if (isExtension) {
+      await new Promise<void>(resolve => {
+        chrome.storage.sync.clear(() => resolve());
+      });
+    } else {
+      await mockStorage.clear();
+    }
   }
 };
 

@@ -1,93 +1,66 @@
 
-// This file will be injected as a content script
-
-// Import types (these won't be included in the bundled content script, just for TS)
-import { detectForms, fillForm, submitForm, DetectedForm } from './utils/autofill';
-import { LoginCredential } from './utils/storage';
-
-// Make functions available to the page context
-declare global {
-  interface Window {
-    detectForms: () => DetectedForm[];
-    fillForm: (form: DetectedForm, credential: LoginCredential) => boolean;
-    submitForm: (form: DetectedForm) => void;
-  }
-}
-
-// Export functions to global scope so they can be called from the extension
-window.detectForms = detectForms;
-window.fillForm = fillForm;
-window.submitForm = submitForm;
+// Content script that runs in the page context
+import { detectForms, fillForm, submitForm } from './utils/autofill';
 
 // Listen for form submissions to capture login credentials
 document.addEventListener('submit', (event) => {
   const form = event.target as HTMLFormElement;
-  const passwordField = form.querySelector('input[type="password"]');
+  const detectedForms = detectForms();
   
-  if (passwordField) {
-    // This might be a login form
-    const formData = new FormData(form);
-    let username = '';
-    let password = '';
+  // Find if this is one of our detected forms
+  const detectedForm = detectedForms.find(f => f.element === form);
+  
+  if (detectedForm && detectedForm.usernameField && detectedForm.passwordField) {
+    const username = detectedForm.usernameField.element.value;
+    const password = detectedForm.passwordField.element.value;
     
-    for (const [key, value] of formData.entries()) {
-      if (typeof value === 'string') {
-        if (key.toLowerCase().includes('user') || 
-            key.toLowerCase().includes('email') || 
-            key.toLowerCase().includes('login')) {
-          username = value;
-        } else if (key.toLowerCase().includes('pass')) {
-          password = value;
-        }
+    if (username && password) {
+      // Get the domain of the current page
+      const url = window.location.href;
+      const title = document.title;
+      
+      // Send the credentials to the background script
+      if (typeof chrome !== 'undefined' && chrome.runtime) {
+        chrome.runtime.sendMessage({
+          action: 'captureCredential',
+          credential: {
+            url,
+            title,
+            username,
+            password
+          }
+        });
       }
     }
-    
-    // If we found both username and password, send them to the background script
-    if (username && password) {
-      chrome.runtime.sendMessage({
-        action: 'captureCredential',
-        url: window.location.href,
-        username,
-        password
-      });
-    }
   }
 });
 
-// Listen for URL changes to detect login forms
-let currentUrl = window.location.href;
-const observer = new MutationObserver(() => {
-  if (window.location.href !== currentUrl) {
-    currentUrl = window.location.href;
-    
-    // Check for login forms on the new page
-    const forms = detectForms();
-    if (forms.length > 0) {
-      chrome.runtime.sendMessage({
-        action: 'formDetected',
-        url: currentUrl
-      });
+// Listen for messages from the extension
+if (typeof chrome !== 'undefined' && chrome.runtime) {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.action === 'detectForms') {
+      const forms = detectForms();
+      sendResponse({ forms: forms.length > 0 });
+      return true;
     }
-  }
-});
-
-// Start observing
-observer.observe(document, { subtree: true, childList: true });
-
-// Initial form detection
-const forms = detectForms();
-if (forms.length > 0) {
-  chrome.runtime.sendMessage({
-    action: 'formDetected',
-    url: currentUrl
+    
+    if (message.action === 'fillForm') {
+      const forms = detectForms();
+      if (forms.length > 0) {
+        const filled = fillForm(forms[0], message.credential);
+        sendResponse({ success: filled });
+      } else {
+        sendResponse({ success: false, error: 'No forms detected' });
+      }
+      return true;
+    }
   });
 }
 
-// Listen for messages from extension
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.action === 'checkForForms') {
-    const forms = detectForms();
-    sendResponse({ hasForms: forms.length > 0 });
-  }
-  return true;
-});
+// Inject the autofill utilities into the page
+if (typeof window !== 'undefined') {
+  // Make functions available to the page context
+  window.detectForms = detectForms;
+  window.fillForm = fillForm;
+  window.submitForm = submitForm;
+}
